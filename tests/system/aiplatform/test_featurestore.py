@@ -219,7 +219,7 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
 
         movie_feature_configs = {
             _TEST_MOVIE_TITLE_FEATURE_ID: {"value_type": "STRING"},
-            _TEST_MOVIE_GENRES_FEATURE_ID: {"value_type": "STRING"},
+            _TEST_MOVIE_GENRES_FEATURE_ID: {"value_type": "STRING_ARRAY"},
             _TEST_MOVIE_AVERAGE_RATING_FEATURE_ID: {"value_type": "DOUBLE"},
         }
 
@@ -277,14 +277,14 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
                     "movie_id": "movie_01",
                     "average_rating": 4.9,
                     "title": "The Shawshank Redemption",
-                    "genres": "Drama",
+                    "genres": ["Drama"],
                     "update_time": "2021-08-20 20:44:11.094375+00:00",
                 },
                 {
                     "movie_id": "movie_02",
                     "average_rating": 4.2,
                     "title": "The Shining",
-                    "genres": "Horror",
+                    "genres": ["Horror"],
                     "update_time": "2021-08-20 20:44:11.094375+00:00",
                 },
             ],
@@ -312,13 +312,13 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
                 "movie_id": "movie_01",
                 "average_rating": 4.9,
                 "title": "The Shawshank Redemption",
-                "genres": "Drama",
+                "genres": ["Drama"],
             },
             {
                 "movie_id": "movie_02",
                 "average_rating": 4.2,
                 "title": "The Shining",
-                "genres": "Horror",
+                "genres": ["Horror"],
             },
         ]
         expected_movie_entity_views_df_after_ingest = pd.DataFrame(
@@ -350,13 +350,13 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
                     "movie_id": "movie_03",
                     "average_rating": 4.5,
                     "title": "Cinema Paradiso",
-                    "genres": "Romance",
+                    "genres": ["Romance"],
                 },
                 {
                     "movie_id": "movie_04",
                     "average_rating": 4.6,
                     "title": "The Dark Knight",
-                    "genres": "Action",
+                    "genres": ["Action"],
                 },
             ],
             columns=["movie_id", "average_rating", "title", "genres"],
@@ -411,6 +411,82 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
             len(list_searched_features) - shared_state["base_list_searched_features"]
         ) == 6
 
+    def test_batch_serve_to_df(self, shared_state, caplog):
+
+        assert shared_state["featurestore"]
+        assert shared_state["user_age_feature_resource_name"]
+        assert shared_state["user_gender_feature_resource_name"]
+        assert shared_state["user_liked_genres_feature_resource_name"]
+
+        featurestore = shared_state["featurestore"]
+
+        user_age_feature_resource_name = shared_state["user_age_feature_resource_name"]
+        user_gender_feature_resource_name = shared_state[
+            "user_gender_feature_resource_name"
+        ]
+        user_liked_genres_feature_resource_name = shared_state[
+            "user_liked_genres_feature_resource_name"
+        ]
+
+        aiplatform.init(
+            project=e2e_base._PROJECT, location=e2e_base._LOCATION,
+        )
+
+        caplog.set_level(logging.INFO)
+
+        read_instances_df = pd.DataFrame(
+            data=[
+                ["alice", "movie_01", "2021-09-15T08:28:14Z"],
+                ["bob", "movie_02", "2021-09-15T08:28:14Z"],
+                ["dav", "movie_03", "2021-09-15T08:28:14Z"],
+                ["eve", "movie_04", "2021-09-15T08:28:14Z"],
+                ["alice", "movie_03", "2021-09-14T09:35:15Z"],
+                ["bob", "movie_04", "2020-02-14T09:35:15Z"],
+            ],
+            columns=["users", "movies", "timestamp"],
+        )
+        read_instances_df = read_instances_df.astype({"timestamp": "datetime64"})
+
+        df = featurestore.batch_serve_to_df(
+            serving_feature_ids={
+                _TEST_USER_ENTITY_TYPE_ID: [
+                    _TEST_USER_AGE_FEATURE_ID,
+                    _TEST_USER_GENDER_FEATURE_ID,
+                    _TEST_USER_LIKED_GENRES_FEATURE_ID,
+                ],
+                _TEST_MOVIE_ENTITY_TYPE_ID: [
+                    _TEST_MOVIE_TITLE_FEATURE_ID,
+                    _TEST_MOVIE_GENRES_FEATURE_ID,
+                    _TEST_MOVIE_AVERAGE_RATING_FEATURE_ID,
+                ],
+            },
+            read_instances_df=read_instances_df,
+            feature_destination_fields={
+                user_age_feature_resource_name: "user_age_dest",
+                user_gender_feature_resource_name: "user_gender_dest",
+                user_liked_genres_feature_resource_name: "user_liked_genres_dest",
+            },
+        )
+
+        expected_df_columns = [
+            "timestamp",
+            "entity_type_users",
+            "user_age_dest",
+            "user_gender_dest",
+            "user_liked_genres_dest",
+            "entity_type_movies",
+            "title",
+            "genres",
+            "average_rating",
+        ]
+
+        assert type(df) == pd.DataFrame
+        assert list(df.columns) == expected_df_columns
+        assert df.size == 54
+        assert "Featurestore feature values served." in caplog.text
+
+        caplog.clear()
+
     def test_batch_serve_to_gcs(self, shared_state, caplog):
 
         assert shared_state["featurestore"]
@@ -448,12 +524,12 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
                     _TEST_MOVIE_AVERAGE_RATING_FEATURE_ID,
                 ],
             },
+            read_instances_uri=_TEST_READ_INSTANCE_SRC,
             feature_destination_fields={
                 user_age_feature_resource_name: "user_age_dest",
                 user_gender_feature_resource_name: "user_gender_dest",
                 user_liked_genres_feature_resource_name: "user_liked_genres_dest",
             },
-            read_instances=_TEST_READ_INSTANCE_SRC,
             gcs_destination_output_uri_prefix=f"gs://{bucket_name}/featurestore_test/tfrecord",
             gcs_destination_type="tfrecord",
         )
@@ -498,12 +574,12 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
                     _TEST_MOVIE_AVERAGE_RATING_FEATURE_ID,
                 ],
             },
+            read_instances_uri=_TEST_READ_INSTANCE_SRC,
             feature_destination_fields={
                 user_age_feature_resource_name: "user_age_dest",
                 user_gender_feature_resource_name: "user_gender_dest",
                 user_liked_genres_feature_resource_name: "user_liked_genres_dest",
             },
-            read_instances=_TEST_READ_INSTANCE_SRC,
             bq_destination_output_uri=f"bq://{bigquery_dataset_id}.test_table",
         )
 
@@ -522,6 +598,12 @@ class TestFeaturestore(e2e_base.TestEndToEnd):
 
         movie_entity_views = movie_entity_type.read(
             entity_ids=["movie_01", "movie_04"],
+            feature_ids=[_TEST_MOVIE_TITLE_FEATURE_ID, _TEST_MOVIE_GENRES_FEATURE_ID],
+        )
+        assert type(movie_entity_views) == pd.DataFrame
+
+        movie_entity_views = movie_entity_type.read(
+            entity_ids="movie_01",
             feature_ids=[_TEST_MOVIE_TITLE_FEATURE_ID, _TEST_MOVIE_GENRES_FEATURE_ID],
         )
         assert type(movie_entity_views) == pd.DataFrame
